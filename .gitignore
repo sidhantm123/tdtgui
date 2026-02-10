@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+*.spec.bak
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# PyInstaller
+*.manifest
+*.spec.tmp
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Session files (user data, not code)
+*.json.bak
+
+# TDT data files (large binary recordings)
+*.tev
+*.tdx
+*.tsq
+*.tnt
+*.tbk
+*.tin
+*.Tbk
+*.Tdx
+*.Tev
+*.Tsq
