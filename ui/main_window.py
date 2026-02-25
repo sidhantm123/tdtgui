@@ -59,11 +59,23 @@ class MainWindow(QMainWindow):
         self._app_state = AppState()
         self._worker_manager = WorkerManager()
 
-        # Current data cache
+        # Current data cache (raw + filtered buffers, wider than the visible view)
         self._raw_data: Optional[np.ndarray] = None
         self._raw_time: Optional[np.ndarray] = None
         self._raw_data_all: Optional[np.ndarray] = None  # All channels for CAR/CMR
         self._filtered_data: Optional[np.ndarray] = None
+
+        # Buffer tracking — describes what time range / channels are in _filtered_data
+        self._buffer_channels: list = []
+        self._buffer_start: float = -1.0
+        self._buffer_end: float = -1.0
+
+        # Async load context — carried from _refresh_plot to _on_data_loaded_async
+        self._load_seq: int = 0          # incremented on each new request to discard stale results
+        self._pending_channels: list = []
+        self._pending_buffer_start: float = 0.0
+        self._pending_buffer_end: float = 0.0
+        self._pending_needs_all: bool = False
 
         # Fast-path tracking
         self._last_plot_channels: list = []
@@ -296,6 +308,13 @@ class MainWindow(QMainWindow):
             self._last_plot_channels = []
             self._last_scatter_mode = False
             self._raw_data_all = None
+            # Invalidate the data buffer so we don't show stale data
+            self._filtered_data = None
+            self._raw_data = None
+            self._raw_time = None
+            self._buffer_channels = []
+            self._buffer_start = -1.0
+            self._buffer_end = -1.0
 
             # Restore scatter mode from stream state
             self._time_plot.set_scatter_mode(state.scatter_mode)
@@ -441,65 +460,152 @@ class MainWindow(QMainWindow):
             progress.close()
 
     def _refresh_plot(self):
-        """Refresh the time series plot."""
+        """Refresh the time series plot, using the in-memory buffer when possible."""
         state = self._app_state.get_current_state()
         if not state or self._app_state.block is None:
             return
 
-        # Get view range
         start, end = state.get_view_range()
         channels = state.get_active_channels()
 
-        try:
-            # Load data for displayed channels
-            data, time_axis = self._app_state.reader.get_stream_data(
-                state.stream_name,
-                channels=channels,
-                start_time=start,
-                end_time=end,
-            )
+        # ── Buffer fast path ────────────────────────────────────────────────
+        # If the current view fits inside already-loaded + filtered data, just
+        # re-slice and re-decimate — no disk I/O at all (~5 ms).
+        if (
+            self._filtered_data is not None
+            and self._raw_time is not None
+            and channels == self._buffer_channels
+            and start >= self._buffer_start
+            and end <= self._buffer_end
+        ):
+            self._apply_filters()  # re-filter in case filter settings changed
+            return
 
+        # ── Buffer miss: async disk load ────────────────────────────────────
+        # Load 1× the view duration as margin on each side so the next few
+        # pan/zoom steps will hit the buffer without touching the disk.
+        view_dur = max(end - start, 1.0)
+        buf_start = max(0.0, start - view_dur)
+        buf_end = min(state.duration, end + view_dur)
+
+        needs_all = any(
+            f.filter_type in (FilterType.CAR, FilterType.CMR) and not f.bypassed
+            for f in state.filters
+        ) and not state.global_bypass
+
+        # When CAR/CMR is active we must load all channels for referencing
+        load_channels = list(range(state.num_channels)) if needs_all else channels
+
+        # Cancel any in-flight load; bump sequence so stale results are dropped
+        self._worker_manager.cancel_all()
+        self._load_seq += 1
+        seq = self._load_seq
+
+        # Store context for _on_data_loaded_async
+        self._pending_channels = channels
+        self._pending_buffer_start = buf_start
+        self._pending_buffer_end = buf_end
+        self._pending_needs_all = needs_all
+
+        worker = DataLoadWorker(
+            self._app_state.reader,
+            state.stream_name,
+            load_channels,
+            buf_start,
+            buf_end,
+        )
+        worker.signals.result.connect(
+            lambda result, s=seq: self._on_data_loaded_async(result, s)
+        )
+        worker.signals.error.connect(
+            lambda err: self._status_label.setText(f"Error loading data: {err}")
+        )
+        self._worker_manager.submit(worker)
+
+    @Slot(object)
+    def _on_data_loaded_async(self, result: dict, seq: int):
+        """Receive async load result; discard stale results from cancelled workers."""
+        if seq != self._load_seq:
+            return  # A newer request was already issued — ignore this one
+
+        state = self._app_state.get_current_state()
+        if state is None:
+            return
+
+        data = result["data"]
+        time_axis = result["time"]
+        channels = self._pending_channels
+
+        if self._pending_needs_all:
+            # data contains ALL channels; split into display subset and full ref
+            self._raw_data_all = data
+            self._raw_data = data[channels, :] if len(channels) < data.shape[0] else data
+        else:
             self._raw_data = data
-            self._raw_time = time_axis
+            self._raw_data_all = None
 
-            # Check if any active filter needs all channels (CAR/CMR)
-            needs_all = any(
-                f.filter_type in (FilterType.CAR, FilterType.CMR) and not f.bypassed
-                for f in state.filters
-            ) and not state.global_bypass
+        self._raw_time = time_axis
 
-            if needs_all:
-                # Load ALL channels for re-referencing
-                all_channels = list(range(state.num_channels))
-                all_data, _ = self._app_state.reader.get_stream_data(
-                    state.stream_name,
-                    channels=all_channels,
-                    start_time=start,
-                    end_time=end,
-                )
-                self._raw_data_all = all_data
-            else:
-                self._raw_data_all = None
+        # Record the buffer extent so future view changes can use the fast path
+        self._buffer_start = self._pending_buffer_start
+        self._buffer_end = self._pending_buffer_end
+        self._buffer_channels = channels
 
-            # Apply filters
-            self._apply_filters()
+        # Apply filters and render
+        self._apply_filters()
 
-        except Exception as e:
-            self._status_label.setText(f"Error loading data: {e}")
+    def _rerender_from_buffer(self, start: float, end: float, state):
+        """
+        Slice the in-memory filtered buffer to [start, end] and render.
+        Uses binary search (O(log n)) — no boolean mask, no copy for the slice.
+        Typically ≤ 5 ms for a 30-second buffer at 24 kHz.
+        """
+        if self._filtered_data is None or self._raw_time is None:
+            return
+
+        time = self._raw_time
+        data = self._filtered_data
+
+        # Binary search is faster than a boolean mask for sorted time arrays
+        i0 = max(0, int(np.searchsorted(time, start, side="left")))
+        i1 = min(len(time), int(np.searchsorted(time, end, side="right")))
+        if i1 <= i0:
+            return
+
+        # Slice — creates a view (no copy) for C-contiguous arrays
+        data_view = data[:, i0:i1] if data.ndim > 1 else data[i0:i1]
+        time_view = time[i0:i1]
+
+        n = data_view.shape[1] if data_view.ndim > 1 else len(data_view)
+        if n > self.MAX_PLOT_POINTS:
+            plot_data, plot_time = decimate_for_display(
+                data_view, time_view, target_points=self.MAX_PLOT_POINTS
+            )
+        else:
+            plot_data = data_view
+            plot_time = time_view
+
+        channels = state.get_active_channels()
+        scatter = state.scatter_mode
+        if channels == self._last_plot_channels and scatter == self._last_scatter_mode:
+            self._time_plot.update_data(plot_data, plot_time)
+        else:
+            self._time_plot.set_scatter_mode(scatter)
+            self._time_plot.set_data(plot_data, plot_time, channels)
+            self._last_plot_channels = channels
+            self._last_scatter_mode = scatter
 
     def _apply_filters(self):
-        """Apply filter chain and update plot."""
+        """Apply filter chain to the loaded buffer, then render the current view."""
         state = self._app_state.get_current_state()
         if state is None or self._raw_data is None:
             return
 
-        data = self._raw_data
-        time_axis = self._raw_time
         channels = state.get_active_channels()
 
-        # Apply filter chain (always returns 3-tuple)
+        # Apply filter chain to the full buffer (always returns 3-tuple)
         data, warnings, vrms_dict = apply_filter_chain(
-            data,
+            self._raw_data,
             state.filters,
             state.sample_rate,
             state.global_bypass,
@@ -509,35 +615,16 @@ class MainWindow(QMainWindow):
         if warnings:
             self._status_label.setText(f"Filter warning: {warnings[0]}")
 
+        # Cache the full-resolution filtered buffer
         self._filtered_data = data
 
         # Update Vrms display
         state.vrms_values = vrms_dict
         self._control_panel.update_vrms(vrms_dict)
 
-        # Decimate for display if needed
-        if data.ndim == 1:
-            n_samples = len(data)
-        else:
-            n_samples = data.shape[1] if data.ndim > 1 else len(data)
-
-        if n_samples > self.MAX_PLOT_POINTS:
-            plot_data, plot_time = decimate_for_display(
-                data, time_axis, target_points=self.MAX_PLOT_POINTS
-            )
-        else:
-            plot_data = data
-            plot_time = time_axis
-
-        # Fast path: reuse existing plot items if channels and scatter mode unchanged
-        scatter = state.scatter_mode
-        if channels == self._last_plot_channels and scatter == self._last_scatter_mode:
-            self._time_plot.update_data(plot_data, plot_time)
-        else:
-            self._time_plot.set_scatter_mode(scatter)
-            self._time_plot.set_data(plot_data, plot_time, channels)
-            self._last_plot_channels = channels
-            self._last_scatter_mode = scatter
+        # Render only the visible view window (slice + decimate from buffer)
+        view_start, view_end = state.get_view_range()
+        self._rerender_from_buffer(view_start, view_end, state)
 
         # Update filter indicator
         if state.filters:
