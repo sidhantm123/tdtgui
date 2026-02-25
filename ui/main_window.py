@@ -173,6 +173,14 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        export_menu = file_menu.addMenu("Export")
+
+        export_binary_action = QAction("Stream as Binary (.i16 / .bin)...", self)
+        export_binary_action.triggered.connect(self._on_export_binary)
+        export_menu.addAction(export_binary_action)
+
+        file_menu.addSeparator()
+
         exit_action = QAction("Exit", self)
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
@@ -632,6 +640,220 @@ class MainWindow(QMainWindow):
             "<li>Session save/load</li>"
             "</ul>",
         )
+
+    def _on_export_binary(self):
+        """Export the current stream as an int16 binary file (.i16 / .bin)."""
+        from datetime import datetime
+
+        state = self._app_state.get_current_state()
+        if not state or self._app_state.block is None:
+            QMessageBox.information(
+                self, "No Data", "No TDT block is currently loaded."
+            )
+            return
+
+        from .export_binary_dialog import ExportBinaryDialog
+
+        dialog = ExportBinaryDialog(state, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        opts = dialog.get_options()
+        channels = opts["channels"]
+
+        if not channels:
+            QMessageBox.warning(self, "Export Error", "No channels selected.")
+            return
+
+        # Default save path: <block_folder>/<stream_name><ext>
+        default_path = str(
+            Path(self._app_state.block.path)
+            / (state.stream_name + opts["extension"])
+        )
+        ext = opts["extension"]
+        filepath, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Binary File",
+            default_path,
+            f"Binary Files (*{ext})",
+        )
+        if not filepath:
+            return
+        if not filepath.endswith(ext):
+            filepath += ext
+
+        progress = QProgressDialog("Preparing export...", "Cancel", 0, 100, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.show()
+        QApplication.processEvents()
+
+        try:
+            displayed_channels = state.get_active_channels()
+            use_fast_path = (
+                opts["range"] == "current_view"
+                and channels == displayed_channels
+                and self._filtered_data is not None
+            )
+
+            if use_fast_path:
+                # Reuse already-filtered data that is in memory (no re-load needed)
+                data = self._filtered_data
+                progress.setValue(60)
+            else:
+                if opts["range"] == "current_view":
+                    t1, t2 = state.get_view_range()
+                else:
+                    t1, t2 = 0.0, state.duration
+
+                progress.setLabelText("Loading data from disk...")
+                QApplication.processEvents()
+
+                # Check if any active filter needs all channels (CAR/CMR)
+                needs_all = any(
+                    f.filter_type in (FilterType.CAR, FilterType.CMR) and not f.bypassed
+                    for f in state.filters
+                ) and not state.global_bypass
+
+                raw, _ = self._app_state.reader.get_stream_data(
+                    state.stream_name,
+                    channels=channels,
+                    start_time=t1,
+                    end_time=t2,
+                )
+                progress.setValue(40)
+
+                all_channel_data = None
+                if needs_all:
+                    progress.setLabelText("Loading all channels for re-referencing...")
+                    QApplication.processEvents()
+                    all_channel_data, _ = self._app_state.reader.get_stream_data(
+                        state.stream_name,
+                        channels=list(range(state.num_channels)),
+                        start_time=t1,
+                        end_time=t2,
+                    )
+
+                progress.setLabelText("Applying filter chain...")
+                QApplication.processEvents()
+                data, _, _ = apply_filter_chain(
+                    raw,
+                    state.filters,
+                    state.sample_rate,
+                    state.global_bypass,
+                    all_channel_data=all_channel_data,
+                    channel_indices=channels,
+                )
+                progress.setValue(70)
+
+            # Ensure 2D: (n_channels, n_samples)
+            if data.ndim == 1:
+                data = data.reshape(1, -1)
+
+            progress.setLabelText("Converting to int16 and writing...")
+            QApplication.processEvents()
+
+            scaled = data * opts["scale"]
+            clipped = np.clip(scaled, -32768, 32767)
+            int16_data = clipped.astype(np.int16)
+
+            if opts["layout"] == "interlaced":
+                # Transpose so layout is (n_samples, n_channels) then write row-major
+                # → ch0_s0, ch1_s0, ..., ch0_s1, ch1_s1, ...
+                np.ascontiguousarray(int16_data.T).tofile(filepath)
+            else:
+                # Channel-sequential: all samples for ch0, then ch1, ...
+                int16_data.tofile(filepath)
+
+            progress.setValue(90)
+
+            # Write companion summary text file
+            summary_path = str(Path(filepath).with_suffix(".txt"))
+            self._write_export_summary(
+                summary_path, state, channels, opts, data.shape, datetime.now()
+            )
+
+            progress.setValue(100)
+
+            file_size_mb = os.path.getsize(filepath) / (1024 * 1024)
+            self._status_label.setText(f"Exported: {filepath}")
+            QMessageBox.information(
+                self,
+                "Export Complete",
+                f"Binary file saved:\n{filepath}\n\n"
+                f"Summary file:\n{summary_path}\n\n"
+                f"File size: {file_size_mb:.1f} MB\n\n"
+                f"Sample rate to use when importing: {state.sample_rate:.4f} Hz",
+            )
+
+        except Exception as e:
+            QMessageBox.warning(
+                self, "Export Error", f"Failed to export data:\n\n{e}"
+            )
+        finally:
+            progress.close()
+
+    def _write_export_summary(
+        self,
+        filepath: str,
+        state,
+        channels: list,
+        opts: dict,
+        data_shape: tuple,
+        export_time,
+    ):
+        """Write a companion .txt summary alongside the binary export."""
+        n_channels, n_samples = data_shape
+
+        if opts["range"] == "current_view":
+            s, e = state.view_start, state.view_end
+            time_range_str = f"{s:.4f} – {e:.4f} s  (current view)"
+        else:
+            time_range_str = f"0 – {state.duration:.4f} s  (full recording)"
+
+        # Describe active filters
+        filter_lines = []
+        if state.global_bypass:
+            filter_lines.append("  (all filters bypassed)")
+        elif not state.filters:
+            filter_lines.append("  (none)")
+        else:
+            idx = 1
+            for f in state.filters:
+                if f.bypassed:
+                    continue
+                filter_lines.append(f"  {idx}. {f.get_display_name()}")
+                idx += 1
+            if not filter_lines:
+                filter_lines.append("  (all filters bypassed individually)")
+
+        ch_1based = [c + 1 for c in channels]
+        layout_desc = (
+            "Interlaced  (ch0_s0, ch1_s0, ..., ch0_s1, ch1_s1, ...)"
+            if opts["layout"] == "interlaced"
+            else "Channel-sequential  (all samples ch0, then ch1, ...)"
+        )
+
+        lines = [
+            "TDT Binary Export Summary",
+            "=" * 40,
+            f"Export Date   : {export_time.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Block         : {self._app_state.block.name}",
+            f"Stream        : {state.stream_name}",
+            f"Channels      : {ch_1based}  (1-based)",
+            f"Time Range    : {time_range_str}",
+            f"Sample Rate   : {state.sample_rate:.6f} Hz",
+            f"Samples/Ch    : {n_samples}",
+            f"Num Channels  : {n_channels}",
+            f"Scale Factor  : {opts['scale']:g}  (data multiplied before int16 conversion)",
+            f"Data Type     : int16  (little-endian)",
+            f"Sample Layout : {layout_desc}",
+            f"File Extension: {opts['extension']}",
+            "",
+            "Active Filters:",
+        ] + filter_lines
+
+        with open(filepath, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
 
     # Drag and drop support
     def dragEnterEvent(self, event: QDragEnterEvent):
