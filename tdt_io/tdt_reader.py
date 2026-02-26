@@ -61,14 +61,9 @@ class TDTReader:
         if not folder.is_dir():
             return False
 
-        # Check for any TDT-related files
-        for f in folder.iterdir():
-            if f.suffix.lower() in TDTReader.TDT_EXTENSIONS:
-                return True
-
-        # Also check for subdirectories that might contain TDT data
-        # TDT often stores data in block folders
-        return False
+        return any(
+            f.suffix.lower() in TDTReader.TDT_EXTENSIONS for f in folder.iterdir()
+        )
 
     def load_block(self, folder_path: str, headers_only: bool = True) -> TDTBlock:
         """
@@ -283,7 +278,7 @@ class TDTReader:
 
             # Create time axis
             n_samples = stream_data.shape[1]
-            time_axis = np.linspace(start_time, start_time + n_samples / fs, n_samples)
+            time_axis = start_time + np.arange(n_samples) / fs
 
             return stream_data.astype(np.float64), time_axis
 

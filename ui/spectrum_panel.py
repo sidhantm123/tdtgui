@@ -167,7 +167,7 @@ class SpectrumPanel(QWidget):
         # Update channel list
         self._channel_list.clear()
         for i in range(state.num_channels):
-            item = QListWidgetItem(f"Channel {i}")
+            item = QListWidgetItem(f"Channel {i+1}")
             item.setData(Qt.ItemDataRole.UserRole, i)
             self._channel_list.addItem(item)
 

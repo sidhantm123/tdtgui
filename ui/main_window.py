@@ -371,7 +371,21 @@ class MainWindow(QMainWindow):
     @Slot()
     def _on_filters_changed(self):
         """Handle filter chain change."""
-        self._apply_filters()
+        state = self._app_state.get_current_state()
+        needs_all = (
+            state is not None
+            and not state.global_bypass
+            and any(
+                f.filter_type in (FilterType.CAR, FilterType.CMR) and not f.bypassed
+                for f in state.filters
+            )
+        )
+        # If CAR/CMR is now active but we only have the displayed-channel buffer
+        # (raw_data_all is None), we need a full reload to get all channels.
+        if needs_all and self._raw_data_all is None:
+            self._refresh_plot()
+        else:
+            self._apply_filters()
         self._update_status()
 
     @Slot(bool)
