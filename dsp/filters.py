@@ -128,7 +128,7 @@ def apply_filter_chain(
     if channel_indices is None:
         channel_indices = list(range(data.shape[0]))
 
-    if global_bypass or not filters:
+    if global_bypass or not filters or all(f.bypassed for f in filters):
         vrms = compute_vrms(data, channel_indices)
         out = data.copy()
         return (out[0] if was_1d else out), warnings, vrms

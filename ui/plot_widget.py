@@ -89,8 +89,9 @@ class TimeSeriesPlot(QWidget):
         self._plot.sigRangeChanged.connect(self._on_range_changed)
 
         # Set up view box for custom interactions
+        # PanMode: left-drag = pan, right-drag = zoom rect, scroll = zoom
         vb = self._plot.getViewBox()
-        vb.setMouseMode(pg.ViewBox.RectMode)
+        vb.setMouseMode(pg.ViewBox.PanMode)
 
     def _on_range_changed(self, view_box, ranges):
         """Handle view range changes."""

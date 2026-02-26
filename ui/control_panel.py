@@ -82,8 +82,8 @@ class ControlPanel(QWidget):
 
         single_layout.addWidget(QLabel("Channel:"))
         self._channel_spin = QSpinBox()
-        self._channel_spin.setMinimum(0)
-        self._channel_spin.setMaximum(0)
+        self._channel_spin.setMinimum(1)
+        self._channel_spin.setMaximum(1)
         self._channel_spin.valueChanged.connect(self._on_single_channel_changed)
         single_layout.addWidget(self._channel_spin)
         single_layout.addStretch()
@@ -195,13 +195,13 @@ class ControlPanel(QWidget):
         )
 
         # Update channel selector range
-        self._channel_spin.setMaximum(max(0, state.num_channels - 1))
-        self._channel_spin.setValue(state.selected_channel)
+        self._channel_spin.setMaximum(state.num_channels)
+        self._channel_spin.setValue(state.selected_channel + 1)
 
         # Update overlay channel combo
         self._add_channel_combo.clear()
         for i in range(state.num_channels):
-            self._add_channel_combo.addItem(f"Ch {i}", i)
+            self._add_channel_combo.addItem(f"Ch {i+1}", i)
 
         # Update mode
         if state.channel_mode == ChannelMode.SINGLE:
@@ -235,7 +235,7 @@ class ControlPanel(QWidget):
         self._overlay_list.clear()
         if self._state:
             for ch in self._state.overlay_channels:
-                item = QListWidgetItem(f"Channel {ch}")
+                item = QListWidgetItem(f"Channel {ch+1}")
                 item.setData(Qt.ItemDataRole.UserRole, ch)
                 self._overlay_list.addItem(item)
 
@@ -257,8 +257,8 @@ class ControlPanel(QWidget):
     def _on_single_channel_changed(self, value: int):
         """Handle single channel selection change."""
         if self._state:
-            self._state.selected_channel = value
-        self.single_channel_changed.emit(value)
+            self._state.selected_channel = value - 1
+        self.single_channel_changed.emit(value - 1)
 
     def _on_add_channel(self):
         """Handle add channel button click."""
@@ -336,13 +336,13 @@ class ControlPanel(QWidget):
         lines = []
         for ch_idx, vrms in sorted(vrms_values.items()):
             if vrms < 1e-6:
-                lines.append(f"Ch {ch_idx}: {vrms * 1e9:.1f} nV")
+                lines.append(f"Ch {ch_idx+1}: {vrms * 1e9:.1f} nV")
             elif vrms < 1e-3:
-                lines.append(f"Ch {ch_idx}: {vrms * 1e6:.1f} uV")
+                lines.append(f"Ch {ch_idx+1}: {vrms * 1e6:.1f} uV")
             elif vrms < 1:
-                lines.append(f"Ch {ch_idx}: {vrms * 1e3:.2f} mV")
+                lines.append(f"Ch {ch_idx+1}: {vrms * 1e3:.2f} mV")
             else:
-                lines.append(f"Ch {ch_idx}: {vrms:.4f} V")
+                lines.append(f"Ch {ch_idx+1}: {vrms:.4f} V")
 
         self._vrms_label.setText("\n".join(lines))
 
