@@ -5,6 +5,7 @@ from typing import Dict, Optional, List, Callable
 from dataclasses import dataclass, field
 
 from models import StreamState
+from models.probe import ProbeGeometry
 from tdt_io import TDTReader, TDTBlock
 
 
@@ -22,6 +23,9 @@ class AppState:
     # TDT data
     reader: TDTReader = field(default_factory=TDTReader)
     block: Optional[TDTBlock] = None
+
+    # Probe geometry (optional; loaded independently of the TDT block)
+    probe: Optional[ProbeGeometry] = None
 
     # Per-stream state
     stream_states: Dict[str, StreamState] = field(default_factory=dict)
@@ -110,10 +114,17 @@ class AppState:
         """Register callback for state updates."""
         self._on_state_updated.append(callback)
 
+    def set_probe(self, geometry: Optional[ProbeGeometry]):
+        """Store probe geometry and notify listeners."""
+        self.probe = geometry
+        for callback in self._on_state_updated:
+            callback()
+
     def close(self):
         """Close current block and clear state."""
         self.reader.close()
         self.block = None
+        self.probe = None
         self.stream_states.clear()
         self.current_stream = None
 
@@ -130,6 +141,7 @@ class AppState:
         session = {
             "block_path": self.block.path,
             "current_stream": self.current_stream,
+            "probe": self.probe.to_probeinterface_dict() if self.probe else None,
             "stream_states": {
                 name: state.to_dict()
                 for name, state in self.stream_states.items()
@@ -188,6 +200,14 @@ class AppState:
                 ]
                 current.psd_nperseg = saved.psd_nperseg
                 current.psd_overlap = saved.psd_overlap
+
+        # Restore probe geometry (optional — missing key or None is fine)
+        probe_dict = session.get("probe")
+        if probe_dict:
+            try:
+                self.probe = ProbeGeometry.from_probeinterface_dict(probe_dict)
+            except Exception:
+                self.probe = None
 
         # Restore selection
         if session.get("current_stream") in self.stream_states:

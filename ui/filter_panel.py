@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from models import StreamState, FilterConfig, FilterType
+from models.probe import ProbeGeometry
 
 
 # Colors for subgroups (distinct, readable)
@@ -224,6 +225,22 @@ class ChannelGroupWidget(QWidget):
                 result.append(sorted(groups[sg_idx]))
         return result
 
+    def reset(self):
+        """Clear all assignments and subgroups, returning widget to initial state."""
+        for ch in range(self._num_channels):
+            self._assignments[ch] = None
+            self._channel_buttons[ch].setStyleSheet(self._channel_style(None))
+
+        for btn in self._subgroup_buttons:
+            self._sg_layout.removeWidget(btn)
+            btn.setParent(None)
+            btn.deleteLater()
+        self._subgroup_buttons.clear()
+        self._subgroups.clear()
+        self._active_subgroup = None
+
+        self._update_status()
+
     def set_channel_groups(self, groups: List[List[int]]):
         """Load saved channel groups (for editing existing filter)."""
         # Create subgroups
@@ -251,6 +268,7 @@ class FilterEditDialog(QDialog):
         filter_config: Optional[FilterConfig] = None,
         sample_rate: float = 24000,
         num_channels: int = 1,
+        probe: Optional[ProbeGeometry] = None,
     ):
         super().__init__(parent)
         self.setWindowTitle("Edit Filter" if filter_config else "Add Filter")
@@ -259,6 +277,7 @@ class FilterEditDialog(QDialog):
         self._sample_rate = sample_rate
         self._num_channels = num_channels
         self._config = filter_config
+        self._probe = probe
 
         self._setup_ui()
 
@@ -338,6 +357,16 @@ class FilterEditDialog(QDialog):
         self._group_widget.setVisible(False)
         layout.addWidget(self._group_widget)
 
+        # Auto-group button (shown only when CAR/CMR is selected)
+        self._auto_group_btn = QPushButton("Auto-group by Shank")
+        self._auto_group_btn.setToolTip(
+            "Assign channels to subgroups based on the loaded probe shank layout"
+        )
+        self._auto_group_btn.clicked.connect(self._on_auto_group_by_shank)
+        self._auto_group_btn.setVisible(False)
+        self._auto_group_btn.setEnabled(self._probe is not None)
+        layout.addWidget(self._auto_group_btn)
+
         # Buttons
         self._button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -366,6 +395,7 @@ class FilterEditDialog(QDialog):
             widget.setVisible(False)
 
         self._group_widget.setVisible(False)
+        self._auto_group_btn.setVisible(False)
 
         if filter_type == FilterType.LOWPASS:
             self._order_label.setVisible(True)
@@ -407,6 +437,8 @@ class FilterEditDialog(QDialog):
 
         elif filter_type in (FilterType.CAR, FilterType.CMR):
             self._group_widget.setVisible(True)
+            self._auto_group_btn.setVisible(True)
+            self._auto_group_btn.setEnabled(self._probe is not None)
             self.setMinimumWidth(450)
             # OK only enabled when all channels assigned
             self._enable_ok(self._group_widget.all_assigned())
@@ -418,6 +450,23 @@ class FilterEditDialog(QDialog):
             self._enable_ok(True)
 
         self.adjustSize()
+
+    def _on_auto_group_by_shank(self):
+        """Populate channel groups from probe shank assignments."""
+        if self._probe is None:
+            return
+        shank_groups = self._probe.get_shank_groups()
+        # Build list of channel lists in sorted shank order, filtered to valid channels
+        groups = [
+            [ch for ch in chs if ch < self._num_channels]
+            for chs in shank_groups.values()
+        ]
+        groups = [g for g in groups if g]  # drop empty groups
+        if not groups:
+            return
+        self._group_widget.reset()
+        self._group_widget.set_channel_groups(groups)
+        self._enable_ok(self._group_widget.all_assigned())
 
     def _on_assignment_changed(self):
         """Handle channel assignment change in group widget."""
@@ -512,6 +561,11 @@ class FilterPanel(QWidget):
         super().__init__(parent)
         self._setup_ui()
         self._state: Optional[StreamState] = None
+        self._probe: Optional[ProbeGeometry] = None
+
+    def set_probe(self, probe: Optional[ProbeGeometry]):
+        """Store probe geometry so it can be passed to filter edit dialogs."""
+        self._probe = probe
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -588,6 +642,7 @@ class FilterPanel(QWidget):
             self,
             sample_rate=self._state.sample_rate,
             num_channels=self._state.num_channels,
+            probe=self._probe,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             config = dialog.get_config()
@@ -615,6 +670,7 @@ class FilterPanel(QWidget):
                 filter_config=config,
                 sample_rate=self._state.sample_rate,
                 num_channels=self._state.num_channels,
+                probe=self._probe,
             )
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 new_config = dialog.get_config()
