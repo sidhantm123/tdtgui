@@ -40,44 +40,34 @@ def decimate_for_display(
         return data, time_axis
 
     if method == "minmax":
-        # MinMax decimation: preserve peaks and troughs
-        # Each output point represents a bin of input points
-        # We output both min and max per bin to preserve visual shape
+        # Vectorised MinMax decimation — no Python loop.
+        # Each bin contributes two output points (min then max) so that peaks
+        # and troughs are preserved in the rendered waveform.
+        n_bins = max(2, target_points // 2)
 
-        # Calculate points per bin (we'll output 2 points per bin)
-        points_per_bin = n_samples / (target_points // 2)
-        n_bins = int(n_samples / points_per_bin)
+        # Trim to the largest exact multiple of n_bins so we can reshape.
+        spb = n_samples // n_bins          # samples per bin
+        if spb < 1:
+            if was_1d:
+                return data[0], time_axis
+            return data, time_axis
+        n_complete = n_bins * spb
 
-        if n_bins < 2:
-            n_bins = 2
+        # Reshape → (n_channels, n_bins, spb), then min/max along last axis
+        data_bins = data[:, :n_complete].reshape(n_channels, n_bins, spb)
+        min_vals = data_bins.min(axis=2)   # (n_channels, n_bins)
+        max_vals = data_bins.max(axis=2)
 
-        # Create output arrays (2 points per bin: min and max)
-        out_samples = n_bins * 2
-        out_data = np.zeros((n_channels, out_samples), dtype=data.dtype)
-        out_time = np.zeros(out_samples, dtype=time_axis.dtype)
+        # Interleave: column 0 = min of bin 0, column 1 = max of bin 0, ...
+        out_data = np.empty((n_channels, n_bins * 2), dtype=data.dtype)
+        out_data[:, 0::2] = min_vals
+        out_data[:, 1::2] = max_vals
 
-        for i in range(n_bins):
-            start_idx = int(i * points_per_bin)
-            end_idx = int((i + 1) * points_per_bin)
-            end_idx = min(end_idx, n_samples)
-
-            if start_idx >= end_idx:
-                continue
-
-            bin_data = data[:, start_idx:end_idx]
-            bin_time = time_axis[start_idx:end_idx]
-
-            # Find min and max indices for each channel
-            min_vals = np.min(bin_data, axis=1)
-            max_vals = np.max(bin_data, axis=1)
-
-            # Store min first, then max (maintains visual order)
-            out_data[:, 2 * i] = min_vals
-            out_data[:, 2 * i + 1] = max_vals
-
-            # Time points at bin boundaries
-            out_time[2 * i] = bin_time[0]
-            out_time[2 * i + 1] = bin_time[-1] if len(bin_time) > 1 else bin_time[0]
+        # Time: start and end sample of each bin
+        time_bins = time_axis[:n_complete].reshape(n_bins, spb)
+        out_time = np.empty(n_bins * 2, dtype=time_axis.dtype)
+        out_time[0::2] = time_bins[:, 0]
+        out_time[1::2] = time_bins[:, -1]
 
         if was_1d:
             return out_data[0], out_time

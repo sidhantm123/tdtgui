@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QProgressDialog,
     QLabel,
     QApplication,
+    QDialog,
 )
 from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent
 
@@ -41,6 +42,7 @@ from .control_panel import ControlPanel
 from .filter_panel import FilterPanel
 from .spectrum_panel import SpectrumPanel
 from .plot_widget import TimeSeriesPlot, SpectrumPlot
+from .probe_map_widget import ProbeMapWidget
 
 
 class MainWindow(QMainWindow):
@@ -148,6 +150,10 @@ class MainWindow(QMainWindow):
         self._spectrum_panel = SpectrumPanel()
         self._control_tabs.addTab(self._spectrum_panel, "Analysis")
 
+        # Probe map tab
+        self._probe_map = ProbeMapWidget()
+        self._control_tabs.addTab(self._probe_map, "Probe Map")
+
         right_layout.addWidget(self._control_tabs)
 
         right_widget.setMaximumWidth(300)
@@ -182,6 +188,12 @@ class MainWindow(QMainWindow):
         load_session.setShortcut("Ctrl+L")
         load_session.triggered.connect(self._on_load_session)
         file_menu.addAction(load_session)
+
+        file_menu.addSeparator()
+
+        load_probe_action = QAction("Load Probe...", self)
+        load_probe_action.triggered.connect(self._on_load_probe)
+        file_menu.addAction(load_probe_action)
 
         file_menu.addSeparator()
 
@@ -232,6 +244,9 @@ class MainWindow(QMainWindow):
         # Control panel
         self._control_panel.channel_mode_changed.connect(self._on_channel_mode_changed)
         self._control_panel.single_channel_changed.connect(self._on_channel_changed)
+        self._control_panel.single_channel_changed.connect(
+            self._probe_map.set_selected_channel
+        )
         self._control_panel.overlay_channels_changed.connect(self._on_channels_changed)
         self._control_panel.view_range_requested.connect(self._on_view_range_requested)
         self._control_panel.refresh_requested.connect(self._refresh_plot)
@@ -354,14 +369,30 @@ class MainWindow(QMainWindow):
     def _on_plot_view_changed(self, start: float, end: float):
         """Handle plot view range change (from user interaction)."""
         state = self._app_state.get_current_state()
-        if state:
-            state.set_view_range(start, end)
-            self._control_panel.update_view_range(start, end)
+        if state is None:
+            return
 
-            # Debounced refresh for smooth zooming
-            if not self._pending_refresh:
-                self._pending_refresh = True
-                QTimer.singleShot(100, self._delayed_refresh)
+        state.set_view_range(start, end)
+        self._control_panel.update_view_range(start, end)
+
+        channels = state.get_active_channels()
+
+        # Fast path: filtered buffer already covers this view — render immediately,
+        # no debounce, no disk I/O, no re-filtering (~5 ms for slice + decimate).
+        if (
+            self._filtered_data is not None
+            and self._raw_time is not None
+            and channels == self._buffer_channels
+            and start >= self._buffer_start
+            and end <= self._buffer_end
+        ):
+            self._rerender_from_buffer(start, end, state)
+            return
+
+        # Buffer miss — debounce so we don't hammer disk while user is still dragging.
+        if not self._pending_refresh:
+            self._pending_refresh = True
+            QTimer.singleShot(150, self._delayed_refresh)
 
     def _delayed_refresh(self):
         """Delayed refresh after view change."""
@@ -483,8 +514,9 @@ class MainWindow(QMainWindow):
         channels = state.get_active_channels()
 
         # ── Buffer fast path ────────────────────────────────────────────────
-        # If the current view fits inside already-loaded + filtered data, just
-        # re-slice and re-decimate — no disk I/O at all (~5 ms).
+        # The view moved within the already-loaded + filtered buffer.
+        # Just re-slice and re-decimate — no disk I/O, no re-filtering (~5 ms).
+        # Filters are re-applied by _on_filters_changed when the chain changes.
         if (
             self._filtered_data is not None
             and self._raw_time is not None
@@ -492,7 +524,7 @@ class MainWindow(QMainWindow):
             and start >= self._buffer_start
             and end <= self._buffer_end
         ):
-            self._apply_filters()  # re-filter in case filter settings changed
+            self._rerender_from_buffer(start, end, state)
             return
 
         # ── Buffer miss: async disk load ────────────────────────────────────
@@ -635,6 +667,7 @@ class MainWindow(QMainWindow):
         # Update Vrms display
         state.vrms_values = vrms_dict
         self._control_panel.update_vrms(vrms_dict)
+        self._probe_map.update_vrms(vrms_dict)
 
         # Render only the visible view window (slice + decimate from buffer)
         view_start, view_end = state.get_view_range()
@@ -717,6 +750,11 @@ class MainWindow(QMainWindow):
                         self._stream_panel.select_stream(self._app_state.current_stream)
                         self._on_stream_selected(self._app_state.current_stream)
 
+                # Restore probe geometry if it was saved with the session
+                if self._app_state.probe is not None:
+                    self._probe_map.set_probe(self._app_state.probe)
+                    self._filter_panel.set_probe(self._app_state.probe)
+
                 self._status_label.setText(f"Session loaded from {filepath}")
 
             except Exception as e:
@@ -740,6 +778,28 @@ class MainWindow(QMainWindow):
             "<li>FFT and PSD analysis</li>"
             "<li>Session save/load</li>"
             "</ul>",
+        )
+
+    def _on_load_probe(self):
+        """Open the probe import dialog and apply geometry to the app."""
+        from .probe_import_dialog import ProbeImportDialog
+
+        dialog = ProbeImportDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        geometry = dialog.geometry()
+        if geometry is None:
+            return
+
+        self._app_state.set_probe(geometry)
+        self._probe_map.set_probe(geometry)
+        self._filter_panel.set_probe(geometry)
+
+        n = geometry.channel_count()
+        n_shanks = len(geometry.get_shank_groups())
+        self._status_label.setText(
+            f"Probe loaded: {n} contacts across {n_shanks} shanks"
         )
 
     def _on_export_binary(self):
