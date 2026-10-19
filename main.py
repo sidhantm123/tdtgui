@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TDT Multi-Channel Viewer
+Multi-Channel Neural Viewer (TDT and Blackrock)
 
 A cross-platform application for viewing and analyzing
 Tucker-Davis Technologies neural recording data.
@@ -42,6 +42,12 @@ def main():
         print("Warning: tdt package not installed. Install with: pip install tdt")
         print("The application will run but won't be able to load TDT files.")
 
+    try:
+        import neo
+    except ImportError:
+        print("Warning: neo package not installed. Install with: pip install neo")
+        print("The application will run but won't be able to load Blackrock files.")
+
     # Enable high DPI scaling
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
@@ -49,7 +55,7 @@ def main():
 
     # Create application first so macOS registers it as a GUI app immediately
     app = QApplication(sys.argv)
-    app.setApplicationName("TDT Multi-Channel Viewer")
+    app.setApplicationName("Multi-Channel Neural Viewer")
     app.setOrganizationName("TDT Viewer")
     app.setApplicationVersion("1.0.0")
     app.setStyle("Fusion")
@@ -63,7 +69,7 @@ def main():
     font.setPointSize(16)
     font.setBold(True)
     painter.setFont(font)
-    painter.drawText(splash_pix.rect(), Qt.AlignmentFlag.AlignCenter, "TDT Multi-Channel Viewer\nLoading…")
+    painter.drawText(splash_pix.rect(), Qt.AlignmentFlag.AlignCenter, "Multi-Channel Neural Viewer\nLoading…")
     painter.end()
 
     splash = QSplashScreen(splash_pix)

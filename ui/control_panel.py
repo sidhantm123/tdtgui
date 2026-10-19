@@ -201,7 +201,7 @@ class ControlPanel(QWidget):
         # Update overlay channel combo
         self._add_channel_combo.clear()
         for i in range(state.num_channels):
-            self._add_channel_combo.addItem(f"Ch {i+1}", i)
+            self._add_channel_combo.addItem(state.channel_label(i), i)
 
         # Update mode
         if state.channel_mode == ChannelMode.SINGLE:
@@ -235,7 +235,7 @@ class ControlPanel(QWidget):
         self._overlay_list.clear()
         if self._state:
             for ch in self._state.overlay_channels:
-                item = QListWidgetItem(f"Channel {ch+1}")
+                item = QListWidgetItem(self._state.channel_label(ch, "Channel"))
                 item.setData(Qt.ItemDataRole.UserRole, ch)
                 self._overlay_list.addItem(item)
 
@@ -335,14 +335,15 @@ class ControlPanel(QWidget):
 
         lines = []
         for ch_idx, vrms in sorted(vrms_values.items()):
+            name = self._state.channel_label(ch_idx) if self._state else f"Ch {ch_idx+1}"
             if vrms < 1e-6:
-                lines.append(f"Ch {ch_idx+1}: {vrms * 1e9:.1f} nV")
+                lines.append(f"{name}: {vrms * 1e9:.1f} nV")
             elif vrms < 1e-3:
-                lines.append(f"Ch {ch_idx+1}: {vrms * 1e6:.1f} uV")
+                lines.append(f"{name}: {vrms * 1e6:.1f} uV")
             elif vrms < 1:
-                lines.append(f"Ch {ch_idx+1}: {vrms * 1e3:.2f} mV")
+                lines.append(f"{name}: {vrms * 1e3:.2f} mV")
             else:
-                lines.append(f"Ch {ch_idx+1}: {vrms:.4f} V")
+                lines.append(f"{name}: {vrms:.4f} V")
 
         self._vrms_label.setText("\n".join(lines))
 

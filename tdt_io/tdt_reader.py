@@ -1,9 +1,9 @@
 """TDT file reading with windowed loading support."""
-import os
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 import numpy as np
+
+from models.recording import StreamInfo, RecordingBlock
 
 try:
     import tdt
@@ -12,32 +12,8 @@ except ImportError:
     TDT_AVAILABLE = False
 
 
-@dataclass
-class StreamInfo:
-    """Information about a TDT stream."""
-
-    name: str
-    num_channels: int
-    sample_rate: float
-    duration: float  # seconds
-    num_samples: int
-    dtype: str
-
-
-@dataclass
-class TDTBlock:
-    """Represents a loaded TDT block with metadata."""
-
-    path: str
-    name: str
-    start_time: float
-    stop_time: float
-    duration: float
-    streams: Dict[str, StreamInfo]
-
-    def get_stream_names(self) -> List[str]:
-        """Return list of stream names."""
-        return list(self.streams.keys())
+# Kept for backward compatibility; new code should use RecordingBlock
+TDTBlock = RecordingBlock
 
 
 class TDTReader:

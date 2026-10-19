@@ -11,12 +11,12 @@ from PySide6.QtWidgets import (
     QGroupBox,
 )
 
-from tdt_io import TDTBlock
+from models.recording import RecordingBlock
 
 
 class StreamPanel(QWidget):
     """
-    Panel showing available streams in the loaded TDT block.
+    Panel showing available streams in the loaded recording.
 
     Displays:
     - Block name and info
@@ -29,7 +29,7 @@ class StreamPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._setup_ui()
-        self._block: Optional[TDTBlock] = None
+        self._block: Optional[RecordingBlock] = None
 
     def _setup_ui(self):
         """Set up the widget layout."""
@@ -64,8 +64,8 @@ class StreamPanel(QWidget):
         layout.addWidget(streams_group)
         layout.addStretch()
 
-    def set_block(self, block: TDTBlock):
-        """Set the TDT block to display."""
+    def set_block(self, block: RecordingBlock):
+        """Set the recording to display."""
         self._block = block
 
         # Update block info

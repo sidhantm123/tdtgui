@@ -23,6 +23,8 @@ hiddenimports = [
     'numpy',
     'pyqtgraph',
     'tdt',
+    'neo',
+    'quantities',
     'PySide6.QtCore',
     'PySide6.QtGui',
     'PySide6.QtWidgets',
@@ -30,6 +32,7 @@ hiddenimports = [
 
 # Add scipy submodules
 hiddenimports += collect_submodules('scipy')
+hiddenimports += collect_submodules('neo.rawio')
 
 # Data files
 datas = []
@@ -40,7 +43,6 @@ try:
     datas += collect_data_files('tdt')
 except Exception:
     pass
-
 a = Analysis(
     ['main.py'],
     pathex=[],

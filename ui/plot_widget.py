@@ -56,6 +56,7 @@ class TimeSeriesPlot(QWidget):
         self._current_data: Optional[np.ndarray] = None
         self._current_time: Optional[np.ndarray] = None
         self._channel_indices: List[int] = []
+        self._channel_names: Optional[List[str]] = None
 
         # Scatter mode
         self._scatter_mode: bool = False
@@ -103,6 +104,7 @@ class TimeSeriesPlot(QWidget):
         data: np.ndarray,
         time_axis: np.ndarray,
         channel_indices: List[int],
+        channel_names: Optional[List[str]] = None,
     ):
         """
         Set data to display.
@@ -111,10 +113,12 @@ class TimeSeriesPlot(QWidget):
             data: Shape (n_channels, n_samples) or (n_samples,)
             time_axis: Time values in seconds
             channel_indices: Original channel indices for labeling
+            channel_names: Legend names, one per entry in channel_indices
         """
         self._current_data = data
         self._current_time = time_axis
         self._channel_indices = channel_indices
+        self._channel_names = channel_names
 
         # Clear existing plots
         for item in self._plot_items.values():
@@ -134,6 +138,7 @@ class TimeSeriesPlot(QWidget):
                 break
 
             color = QColor(CHANNEL_COLORS[i % len(CHANNEL_COLORS)])
+            name = channel_names[i] if channel_names else f"Ch {ch_idx}"
 
             if self._scatter_mode:
                 plot_item = self._plot.plot(
@@ -144,7 +149,7 @@ class TimeSeriesPlot(QWidget):
                     symbolSize=2,
                     symbolBrush=pg.mkBrush(color),
                     symbolPen=None,
-                    name=f"Ch {ch_idx}",
+                    name=name,
                 )
             else:
                 pen = pg.mkPen(color=color, width=1)
@@ -152,7 +157,7 @@ class TimeSeriesPlot(QWidget):
                     time_axis,
                     data[i],
                     pen=pen,
-                    name=f"Ch {ch_idx}",
+                    name=name,
                 )
             self._plot_items[ch_idx] = plot_item
 
@@ -189,7 +194,9 @@ class TimeSeriesPlot(QWidget):
         self._scatter_mode = enabled
         # Re-render with current data if available
         if self._current_data is not None and self._current_time is not None:
-            self.set_data(self._current_data, self._current_time, self._channel_indices)
+            self.set_data(
+                self._current_data, self._current_time, self._channel_indices, self._channel_names
+            )
 
     def set_view_range(self, start: float, end: float):
         """Set the visible time range."""
@@ -267,6 +274,7 @@ class TimeSeriesPlot(QWidget):
         self._current_data = None
         self._current_time = None
         self._channel_indices = []
+        self._channel_names = None
 
         if self._selection_region is not None:
             self._plot.removeItem(self._selection_region)
@@ -316,6 +324,7 @@ class SpectrumPlot(QWidget):
         magnitude: np.ndarray,
         channel_indices: List[int],
         method: str = "psd",
+        channel_names: Optional[List[str]] = None,
     ):
         """
         Set spectrum data to display.
@@ -325,6 +334,7 @@ class SpectrumPlot(QWidget):
             magnitude: Magnitude values (can be 1D or 2D)
             channel_indices: Channel indices for labeling
             method: 'fft' or 'psd' for appropriate labeling
+            channel_names: Legend names, one per entry in channel_indices
         """
         # Clear existing
         for item in self._plot_items.values():
@@ -374,7 +384,7 @@ class SpectrumPlot(QWidget):
                 plot_freqs,
                 plot_mag,
                 pen=pen,
-                name=f"Ch {ch_idx}",
+                name=channel_names[i] if channel_names else f"Ch {ch_idx}",
             )
             self._plot_items[ch_idx] = plot_item
 
