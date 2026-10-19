@@ -33,7 +33,6 @@ from core.workers import (
     SpectralWorker,
 )
 from models import StreamState, ChannelMode
-from tdt_io import TDTReader, TDTBlock
 from dsp import apply_filter_chain, decimate_for_display
 from models.filter_config import FilterType
 
@@ -54,7 +53,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("TDT Multi-Channel Viewer")
+        self.setWindowTitle("Multi-Channel Neural Viewer")
         self.setMinimumSize(1200, 800)
 
         # State
@@ -172,7 +171,7 @@ class MainWindow(QMainWindow):
         # File menu
         file_menu = menubar.addMenu("File")
 
-        open_action = QAction("Open TDT Block...", self)
+        open_action = QAction("Open Recording Folder...", self)
         open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self._on_open_folder)
         file_menu.addAction(open_action)
@@ -218,6 +217,13 @@ class MainWindow(QMainWindow):
         reset_view.triggered.connect(lambda: self._time_plot.reset_view())
         view_menu.addAction(reset_view)
 
+        view_menu.addSeparator()
+
+        recording_info = QAction("Recording Info...", self)
+        recording_info.setShortcut("Ctrl+I")
+        recording_info.triggered.connect(self._on_recording_info)
+        view_menu.addAction(recording_info)
+
         # Help menu
         help_menu = menubar.addMenu("Help")
 
@@ -230,7 +236,7 @@ class MainWindow(QMainWindow):
         self._statusbar = QStatusBar()
         self.setStatusBar(self._statusbar)
 
-        self._status_label = QLabel("Ready - Open a TDT block folder to begin")
+        self._status_label = QLabel("Ready - Open a TDT or Blackrock recording folder to begin")
         self._statusbar.addWidget(self._status_label, 1)
 
         self._filter_indicator = QLabel("")
@@ -271,7 +277,7 @@ class MainWindow(QMainWindow):
         """Handle open folder action."""
         folder = QFileDialog.getExistingDirectory(
             self,
-            "Select TDT Block Folder",
+            "Select TDT Block or Blackrock Recording Folder",
             "",
             QFileDialog.Option.ShowDirsOnly,
         )
@@ -280,9 +286,9 @@ class MainWindow(QMainWindow):
             self._load_block(folder)
 
     def _load_block(self, folder_path: str):
-        """Load a TDT block from folder."""
+        """Load a TDT or Blackrock recording from folder."""
         # Show progress
-        progress = QProgressDialog("Loading TDT block...", None, 0, 0, self)
+        progress = QProgressDialog("Loading recording...", None, 0, 0, self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.show()
         QApplication.processEvents()
@@ -304,9 +310,9 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(
                 self,
                 "Error Loading Block",
-                f"Failed to load TDT block:\n\n{e}\n\n"
+                f"Failed to load recording:\n\n{e}\n\n"
                 "Ensure the folder contains valid TDT recording files "
-                "(.tdx, .tev, .tsq, etc.)",
+                "(.tdx, .tev, .tsq, etc.) or Blackrock files (.ns1-.ns6).",
             )
 
         finally:
@@ -489,6 +495,7 @@ class MainWindow(QMainWindow):
                 magnitude,
                 params["channels"],
                 method=params["method"],
+                channel_names=[state.channel_label(c) for c in params["channels"]],
             )
 
             # Switch to spectrum tab
@@ -637,7 +644,9 @@ class MainWindow(QMainWindow):
             self._time_plot.update_data(plot_data, plot_time)
         else:
             self._time_plot.set_scatter_mode(scatter)
-            self._time_plot.set_data(plot_data, plot_time, channels)
+            self._time_plot.set_data(
+                plot_data, plot_time, channels, [state.channel_label(c) for c in channels]
+            )
             self._last_plot_channels = channels
             self._last_scatter_mode = scatter
 
@@ -702,13 +711,13 @@ class MainWindow(QMainWindow):
                 f"Duration: {duration_str}"
             )
         else:
-            self._status_label.setText("Ready - Open a TDT block folder to begin")
+            self._status_label.setText("Ready - Open a TDT or Blackrock recording folder to begin")
 
     def _on_save_session(self):
         """Save current session to file."""
         if self._app_state.block is None:
             QMessageBox.information(
-                self, "No Data", "No TDT block is currently loaded."
+                self, "No Data", "No recording is currently loaded."
             )
             return
 
@@ -762,15 +771,27 @@ class MainWindow(QMainWindow):
                     self, "Load Error", f"Failed to load session:\n\n{e}"
                 )
 
+    def _on_recording_info(self):
+        """Show metadata for the loaded recording, including Blackrock .ccf settings."""
+        if self._app_state.block is None:
+            QMessageBox.information(
+                self, "No Data", "No recording is currently loaded."
+            )
+            return
+
+        from .recording_info_dialog import RecordingInfoDialog
+
+        RecordingInfoDialog(self._app_state.block, self).exec()
+
     def _on_about(self):
         """Show about dialog."""
         QMessageBox.about(
             self,
-            "About TDT Viewer",
-            "<h3>TDT Multi-Channel Viewer</h3>"
+            "About Multi-Channel Neural Viewer",
+            "<h3>Multi-Channel Neural Viewer</h3>"
             "<p>Version 1.0.0</p>"
             "<p>A cross-platform application for viewing and analyzing "
-            "Tucker-Davis Technologies neural recording data.</p>"
+            "Tucker-Davis Technologies and Blackrock Neurotech neural recording data.</p>"
             "<p>Features:</p>"
             "<ul>"
             "<li>Multi-channel time series visualization</li>"
@@ -809,7 +830,7 @@ class MainWindow(QMainWindow):
         state = self._app_state.get_current_state()
         if not state or self._app_state.block is None:
             QMessageBox.information(
-                self, "No Data", "No TDT block is currently loaded."
+                self, "No Data", "No recording is currently loaded."
             )
             return
 
@@ -995,7 +1016,7 @@ class MainWindow(QMainWindow):
         )
 
         lines = [
-            "TDT Binary Export Summary",
+            "Binary Export Summary",
             "=" * 40,
             f"Export Date   : {export_time.strftime('%Y-%m-%d %H:%M:%S')}",
             f"Block         : {self._app_state.block.name}",

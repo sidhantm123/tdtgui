@@ -80,7 +80,7 @@ class ExportBinaryDialog(QDialog):
         self._ch_list.setMaximumHeight(100)
         self._ch_list.setEnabled(False)
         for i in range(self._state.num_channels):
-            item = QListWidgetItem(f"Channel {i + 1}")
+            item = QListWidgetItem(self._state.channel_label(i, "Channel"))
             item.setData(Qt.ItemDataRole.UserRole, i)
             item.setCheckState(
                 Qt.CheckState.Checked if i in displayed else Qt.CheckState.Unchecked

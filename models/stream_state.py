@@ -19,6 +19,9 @@ class StreamState:
     sample_rate: float
     duration: float  # seconds
 
+    # Hardware channel names (from the recording; not persisted)
+    channel_labels: Optional[List[str]] = None
+
     # Channel selection
     channel_mode: ChannelMode = ChannelMode.SINGLE
     selected_channel: int = 0  # For single mode
@@ -52,6 +55,15 @@ class StreamState:
             self.view_end = min(10.0, self.duration)
         if not self.overlay_channels and self.num_channels > 0:
             self.overlay_channels = [0]
+
+    def channel_label(self, channel: int, prefix: str = "Ch") -> str:
+        """Display name for a 0-based channel, e.g. "Ch 3" or "Ch 3 (elec3)"."""
+        name = f"{prefix} {channel + 1}"
+        if self.channel_labels and 0 <= channel < len(self.channel_labels):
+            label = self.channel_labels[channel]
+            if label and label != name:
+                name = f"{name} ({label})"
+        return name
 
     def get_active_channels(self) -> List[int]:
         """Return list of currently active channel indices."""

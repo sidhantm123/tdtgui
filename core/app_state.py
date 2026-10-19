@@ -6,7 +6,9 @@ from dataclasses import dataclass, field
 
 from models import StreamState
 from models.probe import ProbeGeometry
-from tdt_io import TDTReader, TDTBlock
+from models.recording import RecordingBlock
+from tdt_io import TDTReader
+from .reader_factory import open_reader
 
 
 @dataclass
@@ -15,16 +17,16 @@ class AppState:
     Global application state.
 
     Manages:
-    - Current TDT block
+    - Current recording (TDT block or Blackrock file set)
     - Stream states (one per stream)
     - Current selection
     """
 
-    # TDT data
-    reader: TDTReader = field(default_factory=TDTReader)
-    block: Optional[TDTBlock] = None
+    # Recording data; reader is replaced on each load to match the folder's format
+    reader: object = field(default_factory=TDTReader)
+    block: Optional[RecordingBlock] = None
 
-    # Probe geometry (optional; loaded independently of the TDT block)
+    # Probe geometry (optional; loaded independently of the recording)
     probe: Optional[ProbeGeometry] = None
 
     # Per-stream state
@@ -38,15 +40,15 @@ class AppState:
     _on_stream_changed: List[Callable] = field(default_factory=list)
     _on_state_updated: List[Callable] = field(default_factory=list)
 
-    def load_block(self, folder_path: str) -> TDTBlock:
+    def load_block(self, folder_path: str) -> RecordingBlock:
         """
-        Load a TDT block from folder.
+        Load a recording (TDT or Blackrock) from folder.
 
         Args:
-            folder_path: Path to TDT block folder
+            folder_path: Path to recording folder
 
         Returns:
-            TDTBlock with metadata
+            RecordingBlock with metadata
 
         Raises:
             Various exceptions on failure
@@ -54,7 +56,8 @@ class AppState:
         # Clear previous state
         self.close()
 
-        # Load new block
+        # Load new block with the reader that matches the folder's format
+        self.reader = open_reader(folder_path)
         self.block = self.reader.load_block(folder_path, headers_only=False)
 
         # Create stream states
@@ -64,6 +67,7 @@ class AppState:
                 num_channels=info.num_channels,
                 sample_rate=info.sample_rate,
                 duration=info.duration,
+                channel_labels=info.channel_labels,
             )
 
         # Select first stream by default
