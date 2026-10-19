@@ -9,20 +9,20 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Dict, List, Optional
 
-# Settings shown first in the Recording Info table when present (flattened keys)
+# Settings shown in the Recording Info table when present: (flattened key, column header).
+# Keys match Central's XML layout (CCF Version 12); filter corners are stored in mHz.
 PREFERRED_FIELDS = [
-    "label",
-    "smpgroup",
-    "smpfilter",
-    "spkfilter",
-    "spkthrlevel",
-    "spkopts",
-    "ainpopts",
-    "refelecchan",
-    "lncrate",
-    "physcalin/anagain",
-    "physcalin/anaunit",
-    "scalin/anaunit",
+    ("label", "Label"),
+    ("sample/group", "Sample group (nsX)"),
+    ("sample/filter", "Sample filter"),
+    ("filterdesc/phyfiltin/hpfreq", "HW high-pass (mHz)"),
+    ("filterdesc/phyfiltin/lpfreq", "HW low-pass (mHz)"),
+    ("scale/physcalin/anamax", "Range (±)"),
+    ("scale/physcalin/anaunit", "Units"),
+    ("spike/filter", "Spike filter"),
+    ("spike/threshold/level", "Spike threshold"),
+    ("lnc/rate", "LNC rate"),
+    ("refelecchan", "Ref chan"),
 ]
 
 

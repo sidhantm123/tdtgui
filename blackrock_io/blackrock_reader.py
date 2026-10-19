@@ -167,7 +167,7 @@ class BlackrockReader:
         self._block_path = str(folder)
         self._block_info = RecordingBlock(
             path=str(folder),
-            name=folder.name,
+            name=folder.name if multiple_bases else main_base,
             start_time=start_time,
             stop_time=stop_time,
             duration=max(s.duration for s in streams.values()),

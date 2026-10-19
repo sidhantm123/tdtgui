@@ -68,19 +68,24 @@ def write_nsx_23(path, data_blocks, period=1, labels=None, units=None):
 
 
 CCF_XML = """<?xml version="1.0" encoding="UTF-8"?>
-<CCF Version="7">
+<CCF Version="12">
   <ChanInfo>
-    <ChanInfo_item>
-      <chan>1</chan>
-      <label>M1-a</label>
-      <smpgroup>5</smpgroup>
-      <spkthrlevel>-65</spkthrlevel>
-      <physcalin><anagain>250</anagain><anaunit>uV</anaunit></physcalin>
+    <ChanInfo_item Type="cbPKT_CHANINFO" label="M1-a">
+      <chan Type="UINT32">1</chan>
+      <scale>
+        <physcalin Type="cbSCALING"><anagain Type="INT32">1</anagain><anaunit Type="cstring">uV</anaunit></physcalin>
+      </scale>
+      <filterdesc>
+        <phyfiltin Type="cbFILTDESC"><label Type="cstring">Front End</label><hpfreq Type="UINT32">300</hpfreq></phyfiltin>
+      </filterdesc>
+      <label Type="cstring">M1-a</label>
+      <sample><filter Type="UINT32">0</filter><group Type="UINT32">5</group></sample>
+      <spike><threshold><level Type="INT32">-65</level></threshold></spike>
     </ChanInfo_item>
-    <ChanInfo_item>
-      <chan>2</chan>
-      <label>M1-b</label>
-      <smpgroup>5</smpgroup>
+    <ChanInfo_item Type="cbPKT_CHANINFO" label="M1-b">
+      <chan Type="UINT32">2</chan>
+      <label Type="cstring">M1-b</label>
+      <sample><group Type="UINT32">5</group></sample>
     </ChanInfo_item>
   </ChanInfo>
 </CCF>
@@ -114,6 +119,7 @@ class TestBlackrockReader(unittest.TestCase):
         block = reader.load_block(str(self.tmp))
 
         self.assertEqual(block.source, "blackrock")
+        self.assertEqual(block.name, "rec001")
         self.assertEqual(list(block.streams), ["ns5"])
         info = block.streams["ns5"]
         self.assertEqual(info.num_channels, 3)
@@ -178,12 +184,14 @@ class TestCcfReader(unittest.TestCase):
 
         self.assertIsNone(ccf["error"])
         self.assertEqual(ccf["format"], "xml")
-        self.assertEqual(ccf["version"], "7")
+        self.assertEqual(ccf["version"], "12")
         self.assertEqual([c["chan"] for c in ccf["channels"]], [1, 2])
         first = ccf["channels"][0]
         self.assertEqual(first["label"], "M1-a")
-        self.assertEqual(first["fields"]["spkthrlevel"], "-65")
-        self.assertEqual(first["fields"]["physcalin/anaunit"], "uV")
+        self.assertEqual(first["fields"]["spike/threshold/level"], "-65")
+        self.assertEqual(first["fields"]["scale/physcalin/anaunit"], "uV")
+        # The nested filter label must not shadow the channel label
+        self.assertEqual(first["fields"]["filterdesc/phyfiltin/label"], "Front End")
 
     def test_binary_ccf_reports_error(self):
         path = self.tmp / "old.ccf"

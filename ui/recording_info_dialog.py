@@ -102,19 +102,20 @@ class RecordingInfoDialog(QDialog):
         for ch in channels:
             present.update(ch["fields"])
 
-        columns = [f for f in PREFERRED_FIELDS if f in present]
+        columns = [(key, header) for key, header in PREFERRED_FIELDS if key in present]
         if show_all or len(columns) <= 1:
             # Too little matched the known layout; fall back to every field
-            columns += sorted(present - set(columns))
+            shown = {key for key, _ in columns}
+            columns += [(key, key) for key in sorted(present - shown)]
 
         self._table.clear()
         self._table.setColumnCount(len(columns) + 1)
         self._table.setRowCount(len(channels))
-        self._table.setHorizontalHeaderLabels(["chan"] + columns)
+        self._table.setHorizontalHeaderLabels(["Chan"] + [header for _, header in columns])
 
         for row, ch in enumerate(channels):
             self._table.setItem(row, 0, QTableWidgetItem(str(ch["chan"])))
-            for col, key in enumerate(columns, start=1):
+            for col, (key, _) in enumerate(columns, start=1):
                 self._table.setItem(row, col, QTableWidgetItem(ch["fields"].get(key, "")))
 
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
